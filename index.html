@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<title>12ボタン サウンドボード</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;background:#111827;color:#f9fafb}*{box-sizing:border-box}body{margin:0;padding:max(16px,env(safe-area-inset-top)) 16px max(20px,env(safe-area-inset-bottom));max-width:760px;margin-inline:auto}h1{font-size:1.35rem;margin:4px 0 8px}.help{color:#cbd5e1;line-height:1.55;margin:0 0 14px}.status{min-height:2.8em;border-radius:10px;padding:10px 12px;background:#1f2937;color:#cbd5e1;margin-bottom:14px}.status.error{color:#fecaca;background:#451a1a}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.pad{min-width:0;min-height:130px;border:1px solid #475569;border-radius:16px;background:#243247;color:white;padding:12px;display:flex;flex-direction:column;justify-content:space-between;gap:10px;touch-action:manipulation}.pad:active{background:#334d6e}.pad strong{font-size:1rem;overflow-wrap:anywhere}.pad small{color:#cbd5e1;overflow-wrap:anywhere}.controls{display:flex;gap:8px}.controls button{font:inherit;border:0;border-radius:9px;padding:9px 10px;background:#0f766e;color:white;min-height:42px}.controls .delete{background:#7f1d1d}.stop-all{display:block;width:100%;min-height:52px;margin:0 0 14px;border:0;border-radius:12px;background:#b91c1c;color:white;font:700 1.05rem system-ui,-apple-system,sans-serif;touch-action:manipulation}.stop-all:active{background:#7f1d1d}.empty{color:#94a3b8}footer{color:#94a3b8;font-size:.9rem;line-height:1.5;margin-top:16px}button{cursor:pointer}
+</style>
+</head>
+<body>
+<h1>12ボタン サウンドボード</h1>
+<p class="help">ボタンを押すと再生します。各ボタンの「音源を選ぶ」から、ファイルアプリやダウンロード内の音源を登録できます。</p>
+<div id="status" class="status" role="status" aria-live="polite">保存領域を確認しています。ボタンはすぐに利用できます。</div>
+<button id="stop-all" type="button" class="stop-all" aria-label="再生中の音源をすべて停止">■ すべて停止</button>
+<main id="pads" class="grid" aria-label="音源ボタン"></main>
+<footer>音源はこのブラウザ内に保存され、同じiPadのSafariで次回も利用できます。SafariのWebサイトデータを消去すると登録音源も消えます。重要な音源は元ファイルも保管してください。</footer>
+<script>
+(() => {
+  'use strict';
+  const DB_NAME = 'soundboard9';
+  const STORE = 'audio';
+  const statusEl = document.getElementById('status');
+  const padsEl = document.getElementById('pads');
+  let db = null;
+  const urls = new Map();
+  const labels = new Map();
+  const playing = new Set();
+
+  function status(message, error = false) {
+    statusEl.textContent = message;
+    statusEl.classList.toggle('error', error);
+  }
+  function openDatabase() {
+    return new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) return reject(new Error('IndexedDBを利用できません'));
+      let request;
+      try { request = indexedDB.open(DB_NAME, 1); }
+      catch (err) { reject(err); return; }
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(STORE)) database.createObjectStore(STORE);
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('データベースを開けません'));
+      request.onblocked = () => reject(new Error('別のタブが保存領域を使用中です。ほかのタブを閉じて再読み込みしてください'));
+    });
+  }
+  function dbRequest(mode, action) {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject(new Error('保存領域に接続できません'));
+      let tx;
+      try { tx = db.transaction(STORE, mode); }
+      catch (err) { reject(err); return; }
+      const req = action(tx.objectStore(STORE));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('保存処理に失敗しました'));
+      tx.onabort = () => reject(tx.error || new Error('保存処理が中断されました'));
+    });
+  }
+  function updatePad(i, name) {
+    const title = document.getElementById(`name-${i}`);
+    title.textContent = name || '音源未登録';
+    title.classList.toggle('empty', !name);
+  }
+  function render() {
+    for (let i = 0; i < 12; i++) {
+      const card = document.createElement('section');
+      card.className = 'pad';
+      const title = document.createElement('strong');
+      title.id = `name-${i}`;
+      title.textContent = '読み込み中…';
+      const controls = document.createElement('div');
+      controls.className = 'controls';
+      const pick = document.createElement('button');
+      pick.type = 'button'; pick.textContent = '音源を選ぶ';
+      const input = document.createElement('input');
+      input.type = 'file'; input.accept = 'audio/*'; input.hidden = true;
+      input.setAttribute('aria-label', `${i + 1}番の音源ファイルを選択`);
+      pick.addEventListener('click', () => input.click());
+      input.addEventListener('change', async () => {
+        const file = input.files && input.files[0];
+        input.value = '';
+        if (!file) return;
+        if (!file.type.startsWith('audio/') && !/\.(mp3|m4a|aac|wav|aiff?|caf|ogg|opus|flac)$/i.test(file.name)) {
+          status('音声ファイルを選んでください。', true); return;
+        }
+        try {
+          await dbRequest('readwrite', store => store.put(file, i));
+          labels.set(i, file.name); updatePad(i, file.name);
+          if (urls.has(i)) URL.revokeObjectURL(urls.get(i));
+          urls.delete(i);
+          status(`${i + 1}番に「${file.name}」を保存しました。`);
+        } catch (err) {
+          status(`保存できませんでした: ${err.message}。Safariのサイト設定と空き容量を確認してください。`, true);
+        }
+      });
+      const play = document.createElement('button');
+      play.type = 'button'; play.textContent = '再生';
+      play.addEventListener('click', async () => {
+        try {
+          const blob = await dbRequest('readonly', store => store.get(i));
+          if (!blob) { status(`${i + 1}番に音源を登録してください。`); return; }
+          let url = urls.get(i);
+          if (!url) { url = URL.createObjectURL(blob); urls.set(i, url); }
+          const audio = new Audio(url);
+          playing.add(audio);
+          const cleanup = () => playing.delete(audio);
+          audio.addEventListener('ended', cleanup, { once: true });
+          audio.addEventListener('error', cleanup, { once: true });
+          try { await audio.play(); } catch (err) { cleanup(); throw err; }
+        } catch (err) {
+          status(`再生できませんでした: ${err.message}。音源形式と保存状態を確認してください。`, true);
+        }
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button'; remove.textContent = '解除'; remove.className = 'delete';
+      remove.addEventListener('click', async () => {
+        try {
+          await dbRequest('readwrite', store => store.delete(i));
+          if (urls.has(i)) URL.revokeObjectURL(urls.get(i));
+          urls.delete(i); labels.delete(i); updatePad(i, '');
+          status(`${i + 1}番の音源を解除しました。`);
+        } catch (err) { status(`解除できませんでした: ${err.message}`, true); }
+      });
+      controls.append(pick, play, remove);
+      card.append(title, controls, input);
+      padsEl.append(card);
+    }
+  }
+  document.getElementById('stop-all').addEventListener('click', () => {
+    for (const audio of playing) {
+      audio.pause();
+      try { audio.currentTime = 0; } catch (_) { /* Ignore media that is not seekable yet. */ }
+    }
+    playing.clear();
+    status('再生中の音源をすべて停止しました。');
+  });
+  async function initialize() {
+    render(); // Storage errors must never prevent the twelve-button interface from rendering.
+    try {
+      db = await openDatabase();
+      db.onversionchange = () => { db.close(); db = null; status('保存領域が更新されました。ページを再読み込みしてください。', true); };
+      const keys = await dbRequest('readonly', store => store.getAllKeys());
+      for (const key of keys) {
+        const blob = await dbRequest('readonly', store => store.get(key));
+        if (blob) { labels.set(Number(key), blob.name || '登録済み音源'); updatePad(Number(key), blob.name || '登録済み音源'); }
+      }
+      if (navigator.storage && navigator.storage.persist) {
+        try { await navigator.storage.persist(); } catch (_) { /* Best effort; IndexedDB remains usable. */ }
+      }
+      status('準備完了。音源を登録すると、このiPadのSafariに保存されます。');
+    } catch (err) {
+      db = null;
+      for (let i = 0; i < 12; i++) updatePad(i, '保存領域を利用できません');
+      status(`12個のボタンは表示されていますが、永続保存を開始できません: ${err.message}。SafariでページをHTTPSまたはlocalhostから開き、プライベートブラウズを避けてください。`, true);
+    }
+  }
+  window.addEventListener('pagehide', () => { for (const url of urls.values()) URL.revokeObjectURL(url); });
+  initialize();
+})();
+</script>
+</body>
+</html>
