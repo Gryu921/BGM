@@ -11,11 +11,11 @@
 </head>
 <body>
 <h1>12ボタン サウンドボード</h1>
-<p class="help">ボタンを押すと再生します。各ボタンの「音源を選ぶ」から、ファイルアプリやダウンロード内の音源を登録できます。</p>
+<p class="help">ボタンを押すと再生します。各ボタンの「音源を選ぶ」から、ファイルアプリやダウンロード内の音源を登録できます。iPadではMP3など対応形式のファイルを選んでください。</p>
 <div id="status" class="status" role="status" aria-live="polite">保存領域を確認しています。ボタンはすぐに利用できます。</div>
 <button id="stop-all" type="button" class="stop-all" aria-label="再生中の音源をすべて停止">■ すべて停止</button>
 <main id="pads" class="grid" aria-label="音源ボタン"></main>
-<footer>音源はこのブラウザ内に保存され、同じiPadのSafariで次回も利用できます。SafariのWebサイトデータを消去すると登録音源も消えます。重要な音源は元ファイルも保管してください。</footer>
+<footer>登録した音源はこのサイト用のブラウザー保存領域（IndexedDB）に保存され、サイトを閉じても、同じiPadのSafariで同じサイトを次に開けば利用できます。安定して保存するにはHTTPSで公開したページをSafariで開いてください。SafariのWebサイトデータを消去した場合や、保存領域が消去された場合は登録音源も消えます。元の音源ファイルも保管してください。</footer>
 <script>
 (() => {
   'use strict';
@@ -76,7 +76,8 @@
       const pick = document.createElement('button');
       pick.type = 'button'; pick.textContent = '音源を選ぶ';
       const input = document.createElement('input');
-      input.type = 'file'; input.accept = 'audio/*'; input.hidden = true;
+      // Explicit extensions avoid iOS Safari's audio/* picker filtering issue.
+      input.type = 'file'; input.accept = '.mp3,.m4a,.aac,.wav,.aif,.aiff,.caf,.ogg,.opus,.flac'; input.hidden = true;
       input.setAttribute('aria-label', `${i + 1}番の音源ファイルを選択`);
       pick.addEventListener('click', () => input.click());
       input.addEventListener('change', async () => {
